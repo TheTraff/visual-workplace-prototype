@@ -48,3 +48,61 @@ When an event triggers a state change, a row is inserted into the `fulfillment_h
 This prototype consists of two python scripts:
 * `emit_events.py`: Iterates through a CSV file of events from Archimedes and sends each one to a locally running RabbitMQ server.
 * `receive_events.py`: Listens for those events and processes them as they come. Processing includes keeping track of which state fulfillments are in based on the events received (i.e. If the event `Event::LaunchStart` is received then that fulfillment is in the state `LAUNCHING`).
+
+## Running it yourself
+
+Not much set up is needed in order to get the prototype running locally. The first step is to install RabbitMQ and get a local instance running. If you're on Mac, this can be done using `homebrew`
+
+```bash
+brew update && brew install rabbitmq
+```
+
+After installing, you'll need to update the path and start a local server using the following commands
+
+```bash
+export PATH=$PATH:/usr/local/opt/rabbitmq/sbin
+rabbitmq-server
+```
+
+While there is no need to know the inner workings of RabbitMQ in order to get the scripts up and running, if you want to understand the code you may need to read up through tutorial 3 (for python) [here](https://www.rabbitmq.com/getstarted.html "RabbitMQ Docs"). 
+
+You'll need to ensure there is a running Postgres instance on your machine and that you're using a python version greater than 3.7.4.
+
+To start the program, you should first start the `receive_events.py` script:
+
+```bash
+python3 receive_events.py
+```
+You should see some output along the lines of :
+```
+[x] Setting up database connection
+[*] Waiting for events. To exit press CTRL+C
+```
+You can then start the the other script with the following command:
+```
+python3 emit_events.py data/events_2020-01-18.csv
+```
+You should see output spew with the following format:
+```
+...
+[x] Sent Event::LaunchStart for fulfillment 15905113
+[x] Sent Event::LmiDownload for fulfillment 15905261
+[x] Sent Event::LaunchEnd for fulfillment 15905179
+[x] Sent Event::FulfillmentEnded for fulfillment 15901307
+[x] Sent Event::LaunchStart for fulfillment 15882537
+...
+```
+And `receive_events.py` should now be outputting like so:
+```
+...
+[x] Processing Event::LaunchStart for 15888487
+[x] Processing Event::LmiDownload for 15723625
+[x] Processing Event::LaunchStart for 15913305
+[x] Processing Event::LaunchEnd for 15914216
+[x] Processing Event::Welcome for 15806002
+...
+```
+
+
+
+

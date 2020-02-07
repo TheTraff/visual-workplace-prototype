@@ -8,6 +8,52 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+class States(enum.Enum):
+    ENTERING = 0
+    WAITING = 1
+    LAUNCHING = 2
+    TESTING = 3
+    DONE = 4
+    UNKNOWN = 5
+
+state_changes = {
+    States.ENTERING: {
+        'Event::Welcome': States.ENTERING,
+        'Event::LmiConnected': States.WAITING,
+        'Event::LaunchStart': States.ENTERING,
+        'Event::LaunchEnd': States.ENTERING,
+        'Event::FulfillmentEnded': States.DONE
+    },
+    States.WAITING: {
+        'Event::Welcome': States.WAITING,
+        'Event::LmiConnected': States.WAITING,
+        'Event::LaunchStart': States.LAUNCHING,
+        'Event::LaunchEnd': States.WAITING,
+        'Event::FulfillmentEnded': States.DONE
+    },
+    States.LAUNCHING: {
+        'Event::Welcome': States.LAUNCHING,
+        'Event::LmiConnected': States.LAUNCHING,
+        'Event::LaunchStart': States.LAUNCHING,
+        'Event::LaunchEnd': States.TESTING,
+        'Event::FulfillmentEnded': States.DONE
+    },
+    States.TESTING: {
+        'Event::Welcome': States.TESTING,
+        'Event::LmiConnected': States.TESTING,
+        'Event::LaunchStart': States.TESTING,
+        'Event::LaunchEnd': States.TESTING,
+        'Event::FulfillmentEnded': States.DONE
+    },
+    States.DONE: {
+        'Event::Welcome': States.DONE,
+        'Event::LmiConnected': States.DONE,
+        'Event::LaunchStart': States.DONE,
+        'Event::LaunchEnd': States.DONE,
+        'Event::FulfillmentEnded': States.DONE
+    }
+}
+
 
 Base = declarative_base()
 
@@ -20,13 +66,6 @@ result = channel.queue_declare(queue='', exclusive=True)
 queue_name = result.method.queue
 channel.queue_bind(exchange='events', queue=queue_name)
 
-class States(enum.Enum):
-    ENTERING = 0
-    WAITING = 1
-    LAUNCHING = 2
-    TESTING = 3
-    DONE = 4
-    UNKNOWN = 5
 
 class Fulfillment(Base):
     __tablename__ = 'current_fulfillments'
@@ -39,6 +78,9 @@ class Fulfillment(Base):
 
     def time_in_state(self, event):
         return (datetime.strptime(event.event_time, '%Y-%m-%d %H:%M:%S.%f')- self.state_start_time).seconds
+
+    def change_state(self, event):
+        return state_changes[self.state][event.event_type]
 
 class FulfillmentHistory(Base):
     __tablename__ = 'fulfillment_history'
@@ -65,7 +107,7 @@ Session.configure(bind=engine)
 def get_state(event):
     if event == 'Event::Welcome':
         return States.ENTERING
-    if event == 'Event::LmiDownload':
+    if event == 'Event::LmiConnected':
         return States.WAITING 
     if event == 'Event::LaunchStart':
         return States.LAUNCHING
@@ -88,6 +130,38 @@ def update_history(fulfillment, trigger_event):
     session.add(history_entry)
     session.commit()
     session.close()
+
+def handle_events_4(ch, method, properties, body):
+    event = json.loads(body)
+    event_type = event['event_type']
+    f_id = event['f_id']
+    event_time = event['event_time']
+    print(f" [x] Processing {event['event_type']} for {event['f_id']}")
+
+    print(event) 
+    event = Event(**event)
+    # get sqlalchemy session
+    session = Session()
+
+    session.add(event)
+
+    fulfillment = session.query(Fulfillment).filter_by(f_id=f_id).first()
+    
+    if not fulfillment:
+        # We found a new fulfillment to track
+        fulfillment = Fulfillment(f_id=f_id, state=get_state(event_type), state_start_time=event_time)
+        print(f"\t[x] Found new fulfillment {fulfillment.f_id} in state {fulfillment.state}")
+        session.add(fulfillment)
+        session.commit()
+        session.close()
+    else:
+        new_state = fulfillment.change_state(event)
+        print(f"\t[*] Fulfillment {fulfillment.f_id} moving from state {fulfillment.state} to {new_state}")
+        fulfillment.state = new_state
+
+    session.commit()
+    session.close()
+
 
          
 def handle_events_3(ch, method, properties, body):
@@ -193,7 +267,7 @@ def handle_events(ch, method, properties, body):
         time.sleep(5)
 
 channel.basic_consume(queue=queue_name,
-                      on_message_callback=handle_events_3,
+                      on_message_callback=handle_events_4,
                       auto_ack=True)
 
 print(' [* Waiting for events. To exit press CTRL+C')
