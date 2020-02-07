@@ -34,7 +34,7 @@ In order to track each fulfillment along the proctoring process, they are sorted
 | State     | Event trigger           |
 |-----------|-------------------------|
 |  ENTERING | Event::Welcome          |
-| WAITING   | Event::LmiDownload      |
+| WAITING   | Event::LmiConnected     |
 | LAUNCHING | Event::LaunchStart      |
 | TESTING   | Event::LaunchEnd        |
 | DONE      | Event::FulfillmentEnded |
