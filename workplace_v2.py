@@ -10,9 +10,11 @@ import psycopg2
 import psycopg2.extras
 
 print(" [x] Setting up database connection")
-db_password = os.environ['PGPASSWORD']
-remote_conn = psycopg2.connect(f"postgresql://reports:{db_password}@archimedes.bi.proctoru.com/proctoru_production")
-local_conn = psycopg2.connect("postgresql://master@localhost/datamart")
+read_rep_password = os.environ['RRPASSWORD']
+datamart_password = os.environ['DMPASSWORD']
+remote_conn = psycopg2.connect(f"postgresql://reports:{read_rep_password}@archimedes.bi.proctoru.com/proctoru_production")
+#local_conn = psycopg2.connect("postgresql://master@localhost/datamart")
+datamart_conn = psycopg2.connect(f"postgresql://master:{datamart_password}@datamart-staging.bi.proctoru.com/datamart")
 
 """
         now() as time,
@@ -39,14 +41,8 @@ local_conn = psycopg2.connect("postgresql://master@localhost/datamart")
 def time_buckets():
 
     query = '''
-	select
-        now() as time,
-        sum(case when state = 'WAITING' then 1 else 0 end) as wating_count,
-        sum(case when state = 'PRECHECK' then 1 else 0 end) as precheck_count,
 
-
-    from
-    (select
+  with in_progress as (select
     fulfillments.id as f_id,
     fulfillments.uuid as f_uuid,
     iterations.id as iteration_id,
@@ -54,9 +50,9 @@ def time_buckets():
     iterations.type as iteration_type,
     proctor_levels.name as proctor_level,
     (
-    select 
-      tags.name 
-    from taggings 
+    select
+      tags.name
+    from taggings
     left join tags on tags.id = taggings.tag_id
     where taggings.taggable_id = institutions.id
     and context = 'service_types' and taggable_type = 'Institution') as
@@ -88,14 +84,20 @@ def time_buckets():
         lmi_connected_event.time is not null and
         launch_start_event.time is null and 
         launch_end_event.time is null and 
-        welcome_event.time is not null and 
-        disconnect_event.time is null) then 'WAITING'
+        (disconnect_event.time is null or
+        disconnect_event.time < lmi_connected_event.time)) then 'WAITING'
+
       when (
         welcome_event.time is not null and 
-        lmi_connected_event.time is null and launch_start_event.time is null and
-      launch_end_event.time is null) then 'PRECHECK'
-      when (launch_start_event.time is not null and launch_end_event.time
-      is null) then 'LAUNCHING' 
+        lmi_connected_event.time is null and 
+        launch_start_event.time is null and
+        launch_end_event.time is null and
+        (disconnect_event.time is null or
+        disconnect_event.time < welcome_event.time)) then 'PRECHECK'
+
+      when (
+        launch_start_event.time is not null and
+        launch_end_event.time is null) then 'LAUNCHING' 
     end as state,
 
     array_agg(tags.name) as proctor_skills
@@ -148,8 +150,53 @@ left join proctor_levels on proctor_levels.id = institutions.proctor_level_id
   where fulfillments.actual_started_at is not null
   and fulfillments.actual_ended_at is null
   and fulfillments.actual_started_at > (current_timestamp - interval '3 hours')
-  group by 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16
-) in_progress
+  group by 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16)
+
+ select
+    now() as time,
+    proctor_level,
+    sum(case when state = 'PRECHECK' then 1 else 0 end) as precheck_count,
+    sum(case when state = 'WAITING' then 1 else 0 end) as wating_count,
+    sum(case when state = 'LAUNCHING' then 1 else 0 end) as launching_count,
+    max(case when state = 'WAITING' then current_wait end) as max_wait,
+    avg(case when state = 'WAITING' then current_wait end) as avg_wait,
+
+    sum(case when state = 'WAITING' and 
+        current_wait <= 60 then 1 else 0 end) as 1_min,
+    sum(case when state = 'WAITING' and 
+        (current_wait > 60 and current_wait <= 120) then 1 else 0 end) as 2_min,
+    sum(case when state = 'WAITING' and 
+        (current_wait > 120 and current_wait <= 180 then 1 else 0 end) as 3_min,
+    sum(case when state = 'WAITING' and 
+        (current_wait > 180 and current_wait <= 240 then 1 else 0 end) as 4_min,
+    sum(case when state = 'WAITING' and 
+        (current_wait > 240 and current_wait <= 300 then 1 else 0 end) as 5_min,
+    sum(case when state = 'WAITING' and 
+        (current_wait > 300 and current_wait <= 360 then 1 else 0 end) as 6_min,
+    sum(case when state = 'WAITING' and 
+        (current_wait > 360 and current_wait <= 420 then 1 else 0 end) as 7_min,
+    sum(case when state = 'WAITING' and 
+        (current_wait > 420 and current_wait <= 480 then 1 else 0 end) as 8_min,
+    sum(case when state = 'WAITING' and 
+        (current_wait > 480 and current_wait <= 540 then 1 else 0 end) as 9_min,
+    sum(case when state = 'WAITING' and 
+        (current_wait > 540 and current_wait <= 600 then 1 else 0 end) as 10_min,
+    sum(case when state = 'WAITING' and 
+        (current_wait > 600 and current_wait <= 660 then 1 else 0 end) as 11_min,
+    sum(case when state = 'WAITING' and 
+        (current_wait > 660 and current_wait <= 720 then 1 else 0 end) as 12_min,
+    sum(case when state = 'WAITING' and 
+        (current_wait > 720 and current_wait <= 780 then 1 else 0 end) as 13_min,
+    sum(case when state = 'WAITING' and 
+        (current_wait > 780 and current_wait <= 840 then 1 else 0 end) as 14_min,
+    sum(case when state = 'WAITING' and 
+        (current_wait > 840 and current_wait <= 900 then 1 else 0 end) as 15_min,
+    sum(case when state = 'WAITING' and 
+        (current_wait > 900 then 1 else 0 end) as gt_15_min,
+
+    from in_progress
+    group by proctor_level
+
 ;
 
     '''
@@ -168,31 +215,19 @@ left join proctor_levels on proctor_levels.id = institutions.proctor_level_id
     cur.close()
     return results
 
-def update_datamart_table(fulfillments):
-    cur = local_conn.cursor()
-    records_list_template = ','.join(['%s'] * len(fulfillments))
+def update_datamart_table(records):
+    cur = datamart_conn.cursor()
+    records_list_template = ','.join(['%s'] * len(records))
     query = '''
-        insert into in_progress_fulfillments (fulfillment_id, fulfillment_uuid, iteration_id,
-        institution_id, iteration_type, proctor_level, service_type, now,
-        welcome, precheck_time, lmi_connected, wait_time,
-        current_wait,launch_start, launch_time, launch_end, disconnected,
-        state, proctor_skills) values {} on conflict
-        (fulfillment_id) do update set welcome = excluded.welcome,
-        lmi_connected = excluded.lmi_connected,
-        now = excluded.now,
-        launch_start = excluded.launch_start,
-        launch_end = excluded.launch_end,
-        precheck_time = excluded.precheck_time,
-        wait_time = excluded.wait_time,
-        current_wait = excluded.current_wait,
-        launch_time = excluded.launch_time,
-        state = excluded.state;
+        insert into csr_level_10_sec (t, proctor_level, precheck_count,
+        waiting_count, launching_count, max_wait, avg_wait)
+        values {};
     '''.format(records_list_template)
 
-    cur.execute(query, fulfillments)
+    cur.execute(query, records)
 
 
-    local_conn.commit()
+    datamart_conn.commit()
 
 
     cur.close()
@@ -218,8 +253,8 @@ if __name__ == '__main__':
         records = time_buckets()
         for record in records:
             print(format_record(record))
-        #print("dumping records")
-        #update_datamart_table(fulfillments)
+        print("dumping records")
+        update_datamart_table(records)
 
 
 
